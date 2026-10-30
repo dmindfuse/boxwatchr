@@ -324,7 +324,7 @@ def start_imap(loaded_rules):
     print(flush=True)
 
 
-def service_check():
+def service_check(strict=False):
     logger.debug("Running service health check")
     checks = {
         "rspamd": _check_rspamd,
@@ -337,8 +337,9 @@ def service_check():
     for name, fn in checks.items():
         result = fn()
         if result.fatal:
-            logger.error("Fatal service failure (%s): %s. Shutting down.", name, result.reason)
-            fatal_shutdown()
+            if strict or name != "imap":
+                logger.error("Fatal service failure (%s): %s. Shutting down.", name, result.reason)
+                fatal_shutdown()
         if not result.ok:
             failed.append(name)
     if failed:
@@ -351,7 +352,7 @@ def service_check():
 def wait_for_services():
     logger.info("Waiting for all services to recover...")
     while True:
-        failed = service_check()
+        failed = service_check(strict=False)
         if not failed:
             logger.info("All services recovered")
             return
@@ -363,7 +364,7 @@ def _monitor_loop():
     while True:
         time.sleep(_MONITOR_INTERVAL)
         logger.debug("Health monitor: running periodic service check")
-        failed = service_check()
+        failed = service_check(strict=False)
         if not failed:
             if consecutive_failures > 0:
                 logger.info("All services recovered after %s failure(s)", consecutive_failures)
@@ -375,11 +376,11 @@ def _monitor_loop():
                 consecutive_failures, _MAX_FAILURES
             )
             if consecutive_failures >= _MAX_FAILURES:
-                logger.error(
-                    "Services have been unavailable for too long. Still failing: %s. Shutting down.",
-                    ", ".join(failed)
+                logger.warning(
+                    "Services have been unavailable for too long (%s/%s). Continuing to monitor and retry without shutting down.",
+                    consecutive_failures, _MAX_FAILURES
                 )
-                fatal_shutdown()
+                consecutive_failures = 0
 
 
 def start_monitor():
